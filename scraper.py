@@ -25,23 +25,32 @@ class AniWavesScraper:
             soup = BeautifulSoup(response.text, 'html.parser')
             results = []
             
-            # Find anime items
             anime_items = soup.find_all('div', class_='item')
+            if not anime_items:
+                anime_items = soup.find_all('div', class_='film-poster')
             
-            for item in anime_items[:10]:  # Limit to 10 results
+            for item in anime_items[:10]:
                 try:
-                    link = item.find('a', class_='film-poster')
+                    link = item.find('a', class_='film-poster') or item.find('a')
                     if not link:
                         continue
                     
-                    anime_url = self.base_url + link.get('href', '')
-                    title_elem = item.find('h3', class_='film-name')
-                    title = title_elem.text.strip() if title_elem else "Unknown"
+                    href = link.get('href', '')
+                    if not href.startswith('http'):
+                        anime_url = self.base_url + href
+                    else:
+                        anime_url = href
+                    
+                    title_elem = item.find('h3', class_='film-name') or item.find('a', class_='film-poster')
+                    title = title_elem.text.strip() if title_elem and title_elem.text else link.get('title', 'Unknown')
+                    if title == 'Unknown' and link.get('data-title'):
+                        title = link.get('data-title')
                     
                     img = item.find('img')
-                    poster = img.get('data-src') or img.get('src', '') if img else ''
+                    poster = ''
+                    if img:
+                        poster = img.get('data-src') or img.get('src', '')
                     
-                    # Check for sub/dub
                     badges = item.find_all('span', class_='badge')
                     has_sub = any('sub' in b.text.lower() for b in badges)
                     has_dub = any('dub' in b.text.lower() for b in badges)
@@ -53,7 +62,7 @@ class AniWavesScraper:
                         'has_sub': has_sub,
                         'has_dub': has_dub
                     })
-                except Exception:
+                except Exception as e:
                     continue
             
             return results
@@ -69,38 +78,39 @@ class AniWavesScraper:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Get title
-            title_elem = soup.find('h1', class_='film-name')
+            title_elem = soup.find('h1', class_='film-name') or soup.find('h1')
             title = title_elem.text.strip() if title_elem else "Unknown"
             
-            # Get description
-            desc_elem = soup.find('div', class_='film-description')
+            desc_elem = soup.find('div', class_='film-description') or soup.find('div', class_='description')
             description = desc_elem.text.strip() if desc_elem else ""
             
-            # Get episodes
             episodes = []
-            ep_list = soup.find('div', class_='episodes-list')
+            ep_list = soup.find('div', class_='episodes-list') or soup.find('div', id='episodes-list')
             
             if ep_list:
                 ep_items = ep_list.find_all('a', class_='episode-item')
                 for ep in ep_items:
-                    ep_num = ep.get('data-number', '')
+                    ep_num = ep.get('data-number', '') or ep.get('data-id', '')
                     ep_title = ep.text.strip()
-                    ep_url = self.base_url + ep.get('href', '')
+                    ep_url = ep.get('href', '')
+                    if ep_url and not ep_url.startswith('http'):
+                        ep_url = self.base_url + ep_url
                     if ep_num:
+                        try:
+                            num = int(ep_num) if ep_num.isdigit() else ep_num
+                        except:
+                            num = ep_num
                         episodes.append({
-                            'number': int(ep_num) if ep_num.isdigit() else ep_num,
+                            'number': num,
                             'title': ep_title,
                             'url': ep_url
                         })
             
-            # Alternative: check for ajax episode loading
             if not episodes:
                 film_id = self._extract_film_id(response.text)
                 if film_id:
                     episodes = self._get_episodes_ajax(film_id)
             
-            # Check for sub/dub availability
             servers = soup.find_all('div', class_='server-item')
             has_sub = any('sub' in s.get('data-type', '').lower() for s in servers)
             has_dub = any('dub' in s.get('data-type', '').lower() for s in servers)
@@ -109,7 +119,7 @@ class AniWavesScraper:
                 'title': title,
                 'description': description,
                 'episodes': sorted(episodes, key=lambda x: x['number'] if isinstance(x['number'], int) else 0),
-                'has_sub': has_sub or True,  # Default to True
+                'has_sub': has_sub or True,
                 'has_dub': has_dub or False,
                 'film_id': film_id if 'film_id' in locals() else None
             }
@@ -119,12 +129,15 @@ class AniWavesScraper:
     
     def _extract_film_id(self, html):
         """Extract film ID from page HTML"""
-        match = re.search(r'filmId\s*[=:]\s*["\']?(\d+)', html)
-        if match:
-            return match.group(1)
-        match = re.search(r'data-id\s*=\s*["\'](\d+)', html)
-        if match:
-            return match.group(1)
+        patterns = [
+            r'filmId\s*[=:]\s*["\']?(\d+)',
+            r'data-id\s*=\s*["\'](\d+)',
+            r'film_id\s*[=:]\s*["\']?(\d+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, html)
+            if match:
+                return match.group(1)
         return None
     
     def _get_episodes_ajax(self, film_id):
@@ -134,8 +147,12 @@ class AniWavesScraper:
             response = self.session.get(ajax_url, timeout=30)
             
             if response.status_code == 200:
-                data = response.json()
-                html = data.get('html', data.get('result', ''))
+                try:
+                    data = response.json()
+                    html = data.get('html', data.get('result', ''))
+                except:
+                    html = response.text
+                    
                 soup = BeautifulSoup(html, 'html.parser')
                 
                 episodes = []
@@ -145,8 +162,12 @@ class AniWavesScraper:
                     ep_title = ep.text.strip()
                     ep_id = ep.get('data-id', '')
                     if ep_num:
+                        try:
+                            num = int(ep_num) if ep_num.isdigit() else ep_num
+                        except:
+                            num = ep_num
                         episodes.append({
-                            'number': int(ep_num) if ep_num.isdigit() else ep_num,
+                            'number': num,
                             'title': ep_title,
                             'id': ep_id
                         })
@@ -158,22 +179,25 @@ class AniWavesScraper:
     def get_video_sources(self, episode_url, episode_id=None, version="sub"):
         """Get video sources for an episode"""
         try:
-            # If we have episode_id, use AJAX endpoint
             if episode_id:
                 ajax_url = f"{self.base_url}/ajax/episode/servers"
                 params = {'episodeId': episode_id, 'type': version}
                 response = self.session.get(ajax_url, params=params, timeout=30)
                 
                 if response.status_code == 200:
-                    data = response.json()
-                    html = data.get('html', data.get('result', ''))
+                    try:
+                        data = response.json()
+                        html = data.get('html', data.get('result', ''))
+                    except:
+                        html = response.text
                     return self._parse_video_sources(html)
             
-            # Otherwise scrape episode page
-            response = self.session.get(episode_url, timeout=30)
-            response.raise_for_status()
+            if episode_url:
+                response = self.session.get(episode_url, timeout=30)
+                response.raise_for_status()
+                return self._parse_video_sources(response.text)
             
-            return self._parse_video_sources(response.text)
+            return {}
         except Exception as e:
             print(f"Video sources error: {e}")
             return {}
@@ -184,48 +208,54 @@ class AniWavesScraper:
         try:
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Look for video sources in different formats
-            # Method 1: data-src attributes
             server_items = soup.find_all('div', class_='server-item')
             for server in server_items:
                 quality = server.get('data-quality', '720p')
-                src = server.get('data-src', '')
+                src = server.get('data-src', '') or server.get('data-link', '')
                 if src:
                     sources[quality] = src
             
-            # Method 2: JSON embedded in script
             scripts = soup.find_all('script')
             for script in scripts:
                 text = script.string if script else ''
-                if text and 'sources' in text:
-                    # Extract JSON with sources
-                    match = re.search(r'sources\s*:\s*(\[.*?\])', text, re.DOTALL)
+                if text and ('sources' in text or 'src' in text):
+                    match = re.search(r'sources\s*[:=]\s*(\[.*?\])', text, re.DOTALL)
                     if match:
                         import json
                         try:
                             src_list = json.loads(match.group(1))
                             for src in src_list:
                                 if isinstance(src, dict):
-                                    quality = src.get('label', '720p')
-                                    url = src.get('file', '')
+                                    quality = src.get('label', src.get('quality', '720p'))
+                                    url = src.get('file', src.get('src', ''))
                                     if url:
                                         sources[quality] = url
+                                elif isinstance(src, str):
+                                    sources['720p'] = src
                         except:
                             pass
+                    
+                    match = re.search(r'"file"\s*:\s*"([^"]+)"', text)
+                    if match:
+                        sources['720p'] = match.group(1)
             
-            # Method 3: Direct video tag
             video = soup.find('video')
             if video:
                 src = video.get('src', '')
                 if src:
                     sources['720p'] = src
                 
-                # Check source tags
                 for source in video.find_all('source'):
                     quality = source.get('label', source.get('res', '720p'))
                     src = source.get('src', '')
                     if src:
                         sources[quality] = src
+            
+            iframe = soup.find('iframe')
+            if iframe:
+                src = iframe.get('src', '')
+                if src:
+                    sources['embed'] = src
                         
         except Exception as e:
             print(f"Parse error: {e}")
@@ -248,5 +278,4 @@ class AniWavesScraper:
             return False
 
 
-# Global scraper instance
 scraper = AniWavesScraper()
