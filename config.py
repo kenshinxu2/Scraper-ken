@@ -9,7 +9,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # Bot Settings
 BOT_NAME = "@KENSHIN_ANIME"
-BASE_URL = "https://aniwaves.to"
+BASE_URL = "https://aniwaves.ru"
 
 # Quality Options
 QUALITIES = ["360p", "480p", "720p", "1080p", "2160p"]
