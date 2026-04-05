@@ -1,64 +1,49 @@
 import os
-import shutil
 from pyrogram import Client, filters
-import subprocess
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-app = Client("video_cover_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client("fast_cover_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+# user wise thumb store
+user_thumb = {}
 
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("🔥 Bot is alive! Send video.")
+    await message.reply_text(
+        "🔥 FAST COVER BOT READY\n\n"
+        "1️⃣ Pehle image bhej (cover)\n"
+        "2️⃣ Fir video bhej\n\n"
+        "⚡ Ultra fast processing"
+    )
 
+# 📸 Save user cover image
+@app.on_message(filters.photo)
+async def save_thumb(client, message):
+    thumb_path = await message.download()
 
-def generate_thumb(video, thumb):
-    ffmpeg_path = shutil.which("ffmpeg") or "ffmpeg"
+    user_thumb[message.from_user.id] = thumb_path
 
-    cmd = [
-        ffmpeg_path,
-        "-i", video,
-        "-ss", "00:00:01",
-        "-vframes", "1",
-        "-vf", "scale=320:320",
-        thumb
-    ]
+    await message.reply_text("✅ Cover saved successfully!")
 
-    subprocess.run(cmd)
-
-
+# 🎬 Handle video
 @app.on_message(filters.video)
 async def handle_video(client, message):
-    msg = await message.reply_text("⚡ Processing...")
+    user_id = message.from_user.id
 
-    file_path = await message.download()
-    thumb_path = file_path + ".jpg"
+    if user_id not in user_thumb:
+        return await message.reply_text("❌ Pehle cover image bhej!")
 
-    try:
-        generate_thumb(file_path, thumb_path)
-    except:
-        thumb_path = None
+    thumb = user_thumb[user_id]
 
-    caption = message.caption if message.caption else ""
+    caption = message.caption or ""
 
     await client.send_video(
         chat_id=message.chat.id,
-        video=file_path,
-        caption=caption,
-        thumb=thumb_path if os.path.exists(thumb_path) else None,
+        video=message.video.file_id,  # ⚡ FAST (no download)
+        caption=caption,              # ✅ same caption
+        thumb=thumb,                 # fake cover
         supports_streaming=True
     )
-
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    if os.path.exists(thumb_path):
-        os.remove(thumb_path)
-
-    await msg.delete()
-
-
-print("✅ Bot Started with Docker FFmpeg...")
-app.run()
