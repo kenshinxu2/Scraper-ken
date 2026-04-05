@@ -15,14 +15,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # Default Caption
-DEFAULT_CAPTION = """<b><blockquote>✨ {anime_name} ✨</blockquote></b>
+DEFAULT_CAPTION = """<b><blockquote>✨ {anime_name} ✨</blockquote>
 🌸 Episode : {ep} [S{season}]
 🌸 Quality : {quality}
 🌸 Audio : Hindi Dub 🎙️ | Official
 ━━━━━━━━━━━━━━━━━━━━━
 <blockquote>🚀 For More Join
 🔰 [@KENSHIN_ANIME]</blockquote>
-━━━━━━━━━━━━━━━━━━━━━"""
+━━━━━━━━━━━━━━━━━━━━━</b>"""
 
 # Storage
 user_data = {} # {user_id: {"caption": str, "thumb": file_id}}
