@@ -1,7 +1,6 @@
 import os
 import asyncio
 from pyrogram import Client, filters
-from pyrogram.types import InputMediaVideo
 import subprocess
 
 API_ID = int(os.getenv("API_ID"))
@@ -11,7 +10,17 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 app = Client("video_cover_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 
-# Generate thumbnail using FFmpeg (HD fake cover)
+# 🔹 START COMMAND
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text(
+        "👋 Hello bhai!\n\n"
+        "📤 Mujhe video bhej, mai uska cover/thumbnail change karke wapas bhej dunga.\n\n"
+        "⚡ Fast Processing Enabled"
+    )
+
+
+# 🔹 THUMB GENERATOR
 def generate_thumb(video, thumb):
     cmd = [
         "ffmpeg", "-i", video,
@@ -23,6 +32,7 @@ def generate_thumb(video, thumb):
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# 🔹 VIDEO HANDLER
 @app.on_message(filters.video)
 async def handle_video(client, message):
     msg = await message.reply_text("⚡ Processing...")
@@ -30,10 +40,8 @@ async def handle_video(client, message):
     file_path = await message.download()
     thumb_path = file_path + ".jpg"
 
-    # Create thumbnail
     generate_thumb(file_path, thumb_path)
 
-    # Keep original caption
     caption = message.caption if message.caption else ""
 
     await client.send_video(
@@ -50,4 +58,5 @@ async def handle_video(client, message):
     await msg.delete()
 
 
+print("✅ Bot Started...")
 app.run()
