@@ -1,5 +1,5 @@
 import os
-import asyncio
+import shutil
 from pyrogram import Client, filters
 import subprocess
 
@@ -10,29 +10,26 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 app = Client("video_cover_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 
-# 🔹 START COMMAND
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text(
-        "👋 Hello bhai!\n\n"
-        "📤 Mujhe video bhej, mai uska cover/thumbnail change karke wapas bhej dunga.\n\n"
-        "⚡ Fast Processing Enabled"
-    )
+    await message.reply_text("🔥 Bot is alive! Send video.")
 
 
-# 🔹 THUMB GENERATOR
 def generate_thumb(video, thumb):
+    ffmpeg_path = shutil.which("ffmpeg") or "ffmpeg"
+
     cmd = [
-        "ffmpeg", "-i", video,
+        ffmpeg_path,
+        "-i", video,
         "-ss", "00:00:01",
         "-vframes", "1",
         "-vf", "scale=320:320",
         thumb
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    subprocess.run(cmd)
 
 
-# 🔹 VIDEO HANDLER
 @app.on_message(filters.video)
 async def handle_video(client, message):
     msg = await message.reply_text("⚡ Processing...")
@@ -40,7 +37,10 @@ async def handle_video(client, message):
     file_path = await message.download()
     thumb_path = file_path + ".jpg"
 
-    generate_thumb(file_path, thumb_path)
+    try:
+        generate_thumb(file_path, thumb_path)
+    except:
+        thumb_path = None
 
     caption = message.caption if message.caption else ""
 
@@ -48,15 +48,17 @@ async def handle_video(client, message):
         chat_id=message.chat.id,
         video=file_path,
         caption=caption,
-        thumb=thumb_path,
+        thumb=thumb_path if os.path.exists(thumb_path) else None,
         supports_streaming=True
     )
 
-    os.remove(file_path)
-    os.remove(thumb_path)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    if os.path.exists(thumb_path):
+        os.remove(thumb_path)
 
     await msg.delete()
 
 
-print("✅ Bot Started...")
+print("✅ Bot Started with Docker FFmpeg...")
 app.run()
