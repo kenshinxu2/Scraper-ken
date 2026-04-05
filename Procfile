@@ -1,1 +1,2 @@
-worker: python3.11 main.py
+web: python3.11 bot.py
+
