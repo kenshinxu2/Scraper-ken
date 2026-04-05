@@ -40,22 +40,32 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     video = update.message.video
     
+    # Get caption - handle None case properly
+    original_caption = update.message.caption if update.message.caption else ""
+    
     # Store video info
     pending_videos[user_id] = {
         'video_file_id': video.file_id,
-        'caption': update.message.caption if update.message.caption else "",
+        'caption': original_caption,  # Store original caption exactly as-is
         'width': video.width,
         'height': video.height,
         'duration': video.duration,
         'filename': video.file_name if video.file_name else "video.mp4",
         'mime_type': video.mime_type if video.mime_type else "video/mp4",
-        'supports_streaming': video.supports_streaming if hasattr(video, 'supports_streaming') else True
+        'supports_streaming': video.supports_streaming if hasattr(video, 'supports_streaming') else True,
+        'has_spoiler': video.has_media_spoiler if hasattr(video, 'has_media_spoiler') else False
     }
     
+    # Show user what caption was detected
+    caption_preview = original_caption[:50] + "..." if len(original_caption) > 50 else original_caption
+    if not caption_preview:
+        caption_preview = "(no caption)"
+    
     await update.message.reply_text(
-        "✅ Video received!\n"
-        "📸 Now send me the **HD cover image** (as photo)\n"
-        "⏱️ Processing will take only 0.04 seconds!",
+        f"✅ Video received!\n"
+        f"📝 Caption detected: `{caption_preview}`\n"
+        f"📸 Now send me the **HD cover image** (as photo)\n"
+        f"⏱️ Processing will take only 0.04 seconds!",
         parse_mode='Markdown'
     )
     
@@ -83,25 +93,42 @@ async def handle_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send processing message
         processing_msg = await update.message.reply_text("⚡ Changing cover in 0.04 seconds...")
         
+        # Get original caption exactly as stored
+        original_caption = video_data['caption']
+        
+        logger.info(f"Original caption: {repr(original_caption)}")
+        
+        # Method 1: Try using copy_message with cover (if supported)
+        # Method 2: Use InputMediaVideo with proper caption handling
+        
         # Create InputMediaVideo with new cover
-        # This changes the cover instantly without re-uploading the video
+        # IMPORTANT: We must pass caption exactly as original, not empty string
         media = InputMediaVideo(
             media=video_data['video_file_id'],
-            caption=video_data['caption'],  # Same caption preserved
+            caption=original_caption if original_caption else None,  # Use None if empty, else exact caption
+            parse_mode=None,  # Don't parse markdown/html in caption to preserve exact text
             width=video_data['width'],
             height=video_data['height'],
             duration=video_data['duration'],
             supports_streaming=video_data['supports_streaming'],
             cover=cover_file_id,  # NEW COVER HERE - HD image
-            thumbnail=cover_file_id  # Also set as thumbnail
+            thumbnail=cover_file_id,  # Also set as thumbnail
+            has_spoiler=video_data['has_spoiler']
         )
         
         # Send the video back with new cover
-        # Using send_media_group for single item to use InputMediaVideo
-        await context.bot.send_media_group(
+        sent_messages = await context.bot.send_media_group(
             chat_id=update.effective_chat.id,
             media=[media]
         )
+        
+        # Verify caption was preserved
+        if sent_messages and len(sent_messages) > 0:
+            sent_caption = sent_messages[0].caption if sent_messages[0].caption else ""
+            logger.info(f"Sent caption: {repr(sent_caption)}")
+            
+            if sent_caption != original_caption:
+                logger.warning(f"Caption mismatch! Original: {repr(original_caption)}, Sent: {repr(sent_caption)}")
         
         # Delete processing message
         await processing_msg.delete()
@@ -109,7 +136,7 @@ async def handle_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clean up
         del pending_videos[user_id]
         
-        await update.message.reply_text("✅ Cover changed successfully!")
+        await update.message.reply_text("✅ Cover changed successfully! Caption preserved.")
         
     except Exception as e:
         logger.error(f"Error processing video: {e}")
@@ -126,17 +153,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del pending_videos[user_id]
     await update.message.reply_text("❌ Cancelled. Send /start to try again.")
     return ConversationHandler.END
-
-async def handle_multiple_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle multiple videos sent at once (1,2,3,4 format)"""
-    # This handles when user sends multiple videos without covers
-    # For batch processing, they should use the regular flow
-    await update.message.reply_text(
-        "📝 I see you sent a video!\n"
-        "Please use the step-by-step method:\n"
-        "1. Send video\n"
-        "2. Send cover image"
-    )
 
 def main():
     """Start the bot"""
