@@ -23,14 +23,13 @@ media_group_tasks: dict[str, asyncio.Task] = {}
 @app.on_message(filters.command("start") & filters.private)
 async def start(client: Client, message: Message):
     await message.reply(
-        "👋 **Video Cover Changer Bot**\n\n"
+        "👋 **Video Cover Changer**\n\n"
         "1️⃣ Send a **photo** → sets as cover\n"
-        "2️⃣ Send **video(s)** → cover changes in seconds!\n\n"
-        "✅ No re-upload · ✅ Caption same · ✅ Order same"
+        "2️⃣ Send **video(s)** → done in seconds!\n\n"
+        "✅ Caption same · ✅ Order same"
     )
 
 
-# ── Save Cover Photo ──────────────────────────────────────────
 @app.on_message(filters.photo & filters.private)
 async def save_cover(client: Client, message: Message):
     user_id = message.from_user.id
@@ -42,19 +41,18 @@ async def save_cover(client: Client, message: Message):
         except Exception:
             pass
 
-    msg = await message.reply("⬇️ Downloading cover...")
+    msg = await message.reply("⬇️ Saving cover...")
     path = await client.download_media(message, file_name=f"thumb_{user_id}.jpg")
     user_thumbs[user_id] = path
     await msg.edit("✅ **Cover saved!** Now send your video(s).")
 
 
-# ── Video Handler ─────────────────────────────────────────────
 @app.on_message(filters.video & filters.private)
 async def handle_video(client: Client, message: Message):
     user_id = message.from_user.id
 
     if user_id not in user_thumbs:
-        await message.reply("⚠️ Send a **photo** first to set as cover!")
+        await message.reply("⚠️ Send a **photo** first!")
         return
 
     if message.media_group_id:
@@ -70,7 +68,6 @@ async def handle_video(client: Client, message: Message):
         await process_single(client, message, user_id)
 
 
-# ── Single Video ──────────────────────────────────────────────
 async def process_single(client: Client, message: Message, user_id: int):
     thumb_path = user_thumbs.get(user_id)
     if not thumb_path or not os.path.exists(thumb_path):
@@ -78,9 +75,7 @@ async def process_single(client: Client, message: Message, user_id: int):
         return
 
     status = await message.reply("⚡ Changing cover...")
-
     try:
-        # file_id reuse — only thumb uploads (seconds!)
         await client.send_video(
             chat_id=message.chat.id,
             video=message.video.file_id,
@@ -89,17 +84,14 @@ async def process_single(client: Client, message: Message, user_id: int):
             caption_entities=message.caption_entities,
             supports_streaming=True,
         )
-        await status.edit("✅ Cover changed!")
-
+        await status.delete()
     except Exception as e:
-        await status.edit(f"❌ Error: `{e}`")
+        await status.edit(f"❌ `{e}`")
 
 
-# ── Media Group ───────────────────────────────────────────────
 async def process_group(client: Client, group_id: str, user_id: int):
-    await asyncio.sleep(2)  # wait for all group msgs
+    await asyncio.sleep(2)
 
-    # Sort by message ID → correct order 1,2,3,4
     messages = sorted(media_groups.pop(group_id, []), key=lambda m: m.id)
     media_group_tasks.pop(group_id, None)
 
@@ -111,35 +103,30 @@ async def process_group(client: Client, group_id: str, user_id: int):
         await messages[0].reply("⚠️ Cover not found. Send photo again.")
         return
 
-    status = await messages[0].reply(
-        f"⚡ Changing cover for **{len(messages)}** video(s)..."
-    )
+    status = await messages[0].reply(f"⚡ Processing **{len(messages)}** video(s)...")
 
     try:
-        media_list = []
-        for msg in messages:
-            media_list.append(
-                InputMediaVideo(
-                    media=msg.video.file_id,   # reuse file_id, no download
-                    thumb=thumb_path,
-                    caption=msg.caption or "",
-                    caption_entities=msg.caption_entities,
-                    supports_streaming=True,
-                )
+        media_list = [
+            InputMediaVideo(
+                media=msg.video.file_id,
+                thumb=thumb_path,
+                caption=msg.caption or "",
+                caption_entities=msg.caption_entities,
+                supports_streaming=True,
             )
+            for msg in messages
+        ]
 
-        # Send in chunks of 10 (Telegram limit)
         for i in range(0, len(media_list), 10):
-            chunk = media_list[i:i + 10]
             await client.send_media_group(
                 chat_id=messages[0].chat.id,
-                media=chunk,
+                media=media_list[i:i + 10],
             )
 
-        await status.edit(f"✅ Done! **{len(messages)}** video(s) cover changed!")
+        await status.delete()
 
     except Exception as e:
-        await status.edit(f"❌ Error: `{e}`")
+        await status.edit(f"❌ `{e}`")
 
 
 print("Bot started...")
