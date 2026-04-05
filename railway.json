@@ -1,0 +1,15 @@
+{
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "python3.11 bot.py",
+    "healthcheckPath": "/",
+    "healthcheckTimeout": 10
+  },
+  "variables": {
+    "API_ID": "",
+    "API_HASH": "",
+    "BOT_TOKEN": ""
+  }
+}
