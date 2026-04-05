@@ -1,99 +1,154 @@
-import os
 import asyncio
+import os
+from collections import defaultdict
 from pyrogram import Client, filters
-from pyrogram.types import InputMediaVideo
-from PIL import Image
+from pyrogram.types import InputMediaVideo, Message
 
-# Railway Environment Variables
-API_ID = int(os.environ.get("API_ID", 0))
-API_HASH = os.environ.get("API_HASH", "")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-# Pyrofork Client
-app = Client("video_cover_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client(
+    "cover_changer",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+)
 
-user_queues = {}
+user_thumbs: dict[int, str] = {}
+media_groups: dict[str, list] = defaultdict(list)
+media_group_tasks: dict[str, asyncio.Task] = {}
 
-# Telegram ke rules ke hisaab se Thumbnail ko resize karne ka function
-def prepare_thumbnail(photo_path):
-    try:
-        img = Image.open(photo_path)
-        img.thumbnail((320, 320)) # Telegram API rule: thumb must be max 320x320
-        thumb_path = f"{photo_path}_thumb.jpg"
-        img.convert("RGB").save(thumb_path, "JPEG", quality=85) # Convert to strict JPEG
-        return thumb_path
-    except Exception as e:
-        print(f"Thumbnail resize error: {e}")
-        return photo_path
 
-@app.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_cmd(client, message):
-    await message.reply_text("Bot Ready! ⚡\n1. Videos bhejo (caption aur formatting save rahegi).\n2. Cover image bhejo.\n3. Main order me cover lagakar wapis bhejunga.")
+@app.on_message(filters.command("start") & filters.private)
+async def start(client: Client, message: Message):
+    await message.reply(
+        "👋 **Video Cover Changer Bot**\n\n"
+        "1️⃣ Send a **photo** → sets as cover\n"
+        "2️⃣ Send **video(s)** → cover changes in seconds!\n\n"
+        "✅ No re-upload · ✅ Caption same · ✅ Order same"
+    )
 
-@app.on_message(filters.command("clear") & filters.user(ADMIN_ID))
-async def clear_queue(client, message):
-    user_queues[message.from_user.id] = []
-    await message.reply_text("🗑️ Queue clear kar di gayi hai!")
 
-# Step 1: Videos Save Karna
-@app.on_message(filters.video & filters.user(ADMIN_ID))
-async def handle_video(client, message):
+# ── Save Cover Photo ──────────────────────────────────────────
+@app.on_message(filters.photo & filters.private)
+async def save_cover(client: Client, message: Message):
     user_id = message.from_user.id
-    
-    if user_id not in user_queues:
-        user_queues[user_id] = []
-        
-    user_queues[user_id].append({
-        "msg_id": message.id, # Yeh ID order ko 1,2,3,4 me lagane ke kaam aayegi
-        "file_id": message.video.file_id,
-        "caption": message.caption, 
-        "entities": message.caption_entities # Yeh aapki fonts, emojis, links bachayega
-    })
-    
-    await message.reply_text(f"✅ Video Added! Total in queue: {len(user_queues[user_id])}", quote=True)
 
-# Step 2: Cover lagana aur wapis bhejna
-@app.on_message(filters.photo & filters.user(ADMIN_ID))
-async def handle_photo(client, message):
+    old = user_thumbs.get(user_id)
+    if old and os.path.exists(old):
+        try:
+            os.remove(old)
+        except Exception:
+            pass
+
+    msg = await message.reply("⬇️ Downloading cover...")
+    path = await client.download_media(message, file_name=f"thumb_{user_id}.jpg")
+    user_thumbs[user_id] = path
+    await msg.edit("✅ **Cover saved!** Now send your video(s).")
+
+
+# ── Single Video ──────────────────────────────────────────────
+@app.on_message(filters.video & filters.private)
+async def handle_video(client: Client, message: Message):
     user_id = message.from_user.id
-    
-    if user_id not in user_queues or len(user_queues[user_id]) == 0:
-        await message.reply_text("⚠️ Queue khali hai! Pehle videos bhejo.")
+
+    if user_id not in user_thumbs:
+        await message.reply("⚠️ Send a **photo** first to set as cover!")
         return
-        
-    status_msg = await message.reply_text("⏳ Processing started... Thumbnail set kar raha hu aur line se bhej raha hu!")
-    
-    # Image download karo aur Telegram ke hisaab se resize karo
-    raw_photo = await message.download()
-    final_thumb = prepare_thumbnail(raw_photo)
-    
-    try:
-        # MAIN FIX: Videos ko unke bheje gaye order (Message ID) ke hisaab se sort karo
-        sorted_videos = sorted(user_queues[user_id], key=lambda x: x["msg_id"])
-        
-        for video_data in sorted_videos:
-            # Puraani file_id + naya thumbnail + exactly same caption bhejna
-            await client.send_video(
-                chat_id=message.chat.id,
-                video=video_data["file_id"],
-                thumb=final_thumb, # Resized thumbnail
-                caption=video_data["caption"], 
-                caption_entities=video_data["entities"] # Formatting intact rahegi
-            )
-            await asyncio.sleep(1.5) # FloodWait error se bachne ke liye thoda wait
-            
-        await status_msg.edit_text("🎉 Kaam Ho Gaya! Saare videos naye cover ke sath, original caption ke sath, aur bilkul sahi order me bhej diye gaye hain!")
-        
-    except Exception as e:
-        await message.reply_text(f"❌ Error aagaya: {e}")
-    finally:
-        # Server se kachra saaf karo aur queue zero karo
-        if os.path.exists(raw_photo):
-            os.remove(raw_photo)
-        if os.path.exists(final_thumb):
-            os.remove(final_thumb)
-        user_queues[user_id] = []
 
-print("Pyrofork Bot is starting...")
+    if message.media_group_id:
+        group_id = message.media_group_id
+        media_groups[group_id].append(message)
+
+        if group_id in media_group_tasks:
+            media_group_tasks[group_id].cancel()
+
+        task = asyncio.create_task(process_group(client, group_id, user_id))
+        media_group_tasks[group_id] = task
+    else:
+        await process_single(client, message, user_id)
+
+
+# ── Process Single ────────────────────────────────────────────
+async def process_single(client: Client, message: Message, user_id: int):
+    thumb_path = user_thumbs.get(user_id)
+    if not thumb_path or not os.path.exists(thumb_path):
+        await message.reply("⚠️ Cover not found. Send photo again.")
+        return
+
+    status = await message.reply("⚡ Changing cover...")
+
+    try:
+        # Step 1: Copy message instantly (file_id reuse, no download)
+        copied = await message.copy(chat_id=message.chat.id)
+
+        # Step 2: Edit only the thumbnail (only thumb uploads, ~seconds)
+        await client.edit_message_media(
+            chat_id=message.chat.id,
+            message_id=copied.id,
+            media=InputMediaVideo(
+                media=message.video.file_id,   # original file_id reused
+                thumb=thumb_path,
+                caption=message.caption or "",
+                caption_entities=message.caption_entities,
+                supports_streaming=True,
+            ),
+        )
+
+        await status.edit("✅ Cover changed!")
+
+    except Exception as e:
+        await status.edit(f"❌ Error: `{e}`")
+
+
+# ── Process Media Group ───────────────────────────────────────
+async def process_group(client: Client, group_id: str, user_id: int):
+    await asyncio.sleep(2)  # collect all group messages
+
+    messages = sorted(media_groups.pop(group_id, []), key=lambda m: m.id)
+    media_group_tasks.pop(group_id, None)
+
+    if not messages:
+        return
+
+    thumb_path = user_thumbs.get(user_id)
+    if not thumb_path or not os.path.exists(thumb_path):
+        await messages[0].reply("⚠️ Cover not found. Send photo again.")
+        return
+
+    status = await messages[0].reply(f"⚡ Changing cover for **{len(messages)}** video(s)...")
+
+    try:
+        # Step 1: Copy entire media group instantly
+        copied_msgs = await client.copy_media_group(
+            chat_id=messages[0].chat.id,
+            from_chat_id=messages[0].chat.id,
+            message_id=messages[0].id,
+        )
+
+        # Sort copied messages to maintain order
+        copied_msgs = sorted(copied_msgs, key=lambda m: m.id)
+
+        # Step 2: Edit each message's thumbnail only
+        for orig, copied in zip(messages, copied_msgs):
+            await client.edit_message_media(
+                chat_id=orig.chat.id,
+                message_id=copied.id,
+                media=InputMediaVideo(
+                    media=orig.video.file_id,   # original file_id reused
+                    thumb=thumb_path,
+                    caption=orig.caption or "",
+                    caption_entities=orig.caption_entities,
+                    supports_streaming=True,
+                ),
+            )
+
+        await status.edit(f"✅ Cover changed for **{len(messages)}** video(s)!")
+
+    except Exception as e:
+        await status.edit(f"❌ Error: `{e}`")
+
+
+print("Bot started...")
 app.run()
