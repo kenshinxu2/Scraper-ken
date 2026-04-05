@@ -1,5 +1,2 @@
-pyrofork
-tgcrypto
-requests
-beautifulsoup4
-uvloop
+Pyrogram==2.0.106
+TgCrypto==1.2.5
